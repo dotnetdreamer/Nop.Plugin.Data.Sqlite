@@ -1,0 +1,11 @@
+{
+  "Group": "Data providers",
+  "FriendlyName": "SQLite data provider",
+  "SystemName": "Data.Sqlite",
+  "Version": "4.80.1",
+  "SupportedVersions": [ "4.80" ],
+  "Author": "Fabrix",
+  "DisplayOrder": 1,
+  "FileName": "Nop.Plugin.Data.Sqlite.dll",
+  "Description": "Runs the store on a local SQLite database file, with no database server to install"
+}
