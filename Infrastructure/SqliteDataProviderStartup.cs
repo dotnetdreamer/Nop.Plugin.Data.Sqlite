@@ -70,6 +70,7 @@ public class SqliteDataProviderStartup : INopStartup
         services.AddTransient<IDataProviderManager, SqliteDataProviderManager>();
 
         //FluentMigrator: the SQLite processor, using the store connections and the nopCommerce-aware DDL generator
+        services.AddScoped<IGeneratorAccessor, SqliteGeneratorAccessor>();
         services.AddScoped<IProcessorAccessor, SqliteProcessorAccessor>();
         services.ConfigureRunner(runnerBuilder => runnerBuilder.AddSQLite());
         services.Replace(ServiceDescriptor.Scoped<SQLiteDbFactory, NopSqliteDbFactory>());

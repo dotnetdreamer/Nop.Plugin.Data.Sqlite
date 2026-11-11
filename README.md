@@ -10,14 +10,17 @@ Each nopCommerce version has its own branch:
 
 | Branch | nopCommerce |
 | --- | --- |
+| `main` | 4.80 (the same code as `4.80`) |
 | `4.80` | 4.80 |
+| `4.90` | 4.90 |
+| `5.00` | 5.00 |
 
 ## Add it to your nopCommerce source
 
 The plugin builds inside the nopCommerce source tree, next to the other plugins in `src/Plugins`. It references `Nop.Web` and `Nop.Web.Framework`, and uses nopCommerce's `ClearPluginAssemblies` build step. From the root of the nopCommerce repository (the folder that contains `src`):
 
 ```
-git submodule add -b 4.80 https://github.com/dotnetdreamer/Nop.Plugin.Data.Sqlite.git src/Plugins/Nop.Plugin.Data.Sqlite
+git submodule add -b 4.90 https://github.com/dotnetdreamer/Nop.Plugin.Data.Sqlite.git src/Plugins/Nop.Plugin.Data.Sqlite
 dotnet sln src/NopCommerce.sln add --solution-folder Plugins src/Plugins/Nop.Plugin.Data.Sqlite/Nop.Plugin.Data.Sqlite.csproj
 ```
 
@@ -81,19 +84,20 @@ To start over:
 
 | Concern | What the plugin does |
 | --- | --- |
-| Plugging in | Only dependency injection. It registers `SqliteDataProviderManager` for `IDataProviderManager` (which supplies `INopDataProvider`) and `SqliteProcessorAccessor` for the migration processor accessor, plus FluentMigrator's SQLite services. On another database it registers nothing. |
-| Startup migrations | `NopDbStartup` (order 10) applies the schema migrations while it registers its services, using the built-in processors only. `SqliteEarlyStartup` (order 5) hides the database from it. `SqliteDataProviderStartup` (order 11) restores it and applies the migrations with the SQLite processor. |
+| Plugging in | Only dependency injection. It registers `SqliteDataProviderManager` for `IDataProviderManager` (which supplies `INopDataProvider`), and `SqliteGeneratorAccessor` and `SqliteProcessorAccessor` for the migration generator and processor accessors, plus FluentMigrator's SQLite services. On another database it registers nothing. |
+| Startup migrations | `NopDbStartup` (order 10) applies the schema migrations while it registers its services, using the built-in processors only. `SqliteEarlyStartup` (order 5) hides the database from it. `SqliteDataProviderStartup` (order 11) restores it and applies the migrations with the SQLite processor. Hiding it also keeps nopCommerce's `AddNopDbEngines` from failing: for an installed store, it throws on a data provider it doesn't know. |
 | Installation wizard | `SqliteInstallationLocalizationService` adds SQLite to the provider list. `InstallController` creates data providers with a switch over the built-in ones, so `SqliteInstallationFilter` runs the installation when SQLite is posted. Apart from the provider it does what `InstallController.Index` does. |
 | Concurrency | WAL journal mode: reads never block and are never blocked. All writes go through one background writer per database (`SqliteWriteQueue`) and run in arrival order on a single connection, so concurrent requests never fight for SQLite's single write lock ("database is locked"). Callers await their write as before. |
 | Group commit | When several single-row writes (insert, update, delete of an entity) are waiting, the writer runs them in one transaction, each inside its own savepoint, and commits once. A write that fails is rolled back to its savepoint, the writes before it are committed, and it runs again on its own, so every caller gets exactly the outcome it would get without batching. A write is reported as done only once it's committed. Writes that manage their own transaction (bulk insert, update or delete, raw SQL, backup, restore, re-index) always run alone. When writes queue up, the writer completes about 3 times as many per second. A whole request does much more than its write, though, so the store's pages gain little from it. |
 | Prepared statements | Not kept between queries: each query prepares its statement on a connection from Microsoft.Data.Sqlite's pool, as before. Keeping prepared statements on long-lived pooled connections was tried and measured: storefront searches got slower and pages no faster, so it was dropped. |
 | Memory statistics | Turned off for the process (`SqliteGlobalSettings`), before SQLite initializes. With them on, every SQLite allocation updates global counters under one mutex, so concurrent queries queue on it. With 64 concurrent admin requests that write, the store handled 6–10% more requests per second with them off, at a lower median latency. Single requests and reads showed no difference. SQLite recommends it for speed. Only the memory counters of `sqlite3_status()` stop working. |
 | Write-ahead log size | The log has no cap: it grows while writes come faster than they can be checkpointed, or while a reader keeps an old snapshot. Whenever SQLite starts reusing it, the file is shrunk back to 4 MB (`journal_size_limit`). Once no write came for a second, the writer checkpoints and truncates it to zero bytes, without waiting for readers. If a reader still uses an old snapshot, it tries again every second. |
-| Case-insensitive text | Text columns are created with `COLLATE NOCASE`, so `Email = 'ADMIN@X.COM'`, sorting and unique indexes behave like SQL Server's default collation (ASCII letters). |
+| Case-insensitive text | Text columns are created with `COLLATE NOCASE`, so `Email = 'ADMIN@X.COM'`, sorting and unique indexes behave like SQL Server's default collation (ASCII letters). *System information* shows `NOCASE` as the database collation. |
 | Foreign keys | Declared inside `CREATE TABLE` and enforced (`Foreign Keys=True`), so cascade deletes work as on SQL Server. |
 | Identities | `AUTOINCREMENT`: identifiers are never reused, and bulk inserts continue from `sqlite_sequence`. |
 | Migrations | Run in autocommit mode, because nopCommerce data migrations write through its services (other connections) while the migration runs. |
-| Backup / restore | *Admin > System > Maintenance* works. Backups use the SQLite online backup API and produce a single `.bak` file. Restore runs inside the writer, after a `PRAGMA quick_check`. "Re-index" runs `REINDEX`, `ANALYZE` and `VACUUM`. |
+| Altering columns | SQLite has no `ALTER COLUMN`. A column that already has the requested definition is left as it is: nopCommerce's upgrade migrations also run on a new store, whose columns already have their final definition. Any other change rebuilds the table, the way the [SQLite documentation](https://www.sqlite.org/lang_altertable.html#otheralter) describes: a new table with the new definition is filled, the old one dropped and the new one renamed, in one transaction. Rows, indexes, triggers and the `AUTOINCREMENT` sequence are kept, and the foreign keys are checked before the commit. |
+| Backup / restore | *Admin > System > Maintenance* works. Backups use the SQLite online backup API and produce a single `.bak` file. Restore runs inside the writer, after a `PRAGMA quick_check`. "Re-index" runs `REINDEX`, `ANALYZE` and `VACUUM`. "Shrink database" runs `VACUUM` and empties the write-ahead log. |
 | Native library | The plugin ships `e_sqlite3` for every platform in `runtimes/`. `SqliteNativeLibraryResolver` loads the right one, because nopCommerce deletes plugin `.deps.json` files. |
 | Safety | The plugin refuses to be uninstalled while the store runs on SQLite. The *App settings* page keeps SQLite, because its list only offers the built-in providers. A transaction begun with SQL (`BEGIN`) and left open when its connection closes is rolled back, so the pooled connection can't keep the write lock. |
 
@@ -112,6 +116,8 @@ Create a branch named after the version, starting from the closest existing bran
 
 * `SqliteInstallationFilter` mirrors `InstallController.Index`.
 * `NopDbStartup` applies the schema migrations in `ConfigureServices`. `SqliteDataProviderStartup.ApplySchemaMigrations` mirrors that code, and hiding the database uses `DataSettingsManager._databaseIsInstalled`.
+* `SqliteGeneratorAccessor` and `SqliteProcessorAccessor` extend `NopGeneratorAccessor` and `NopProcessorAccessor`, which `NopDbStartup` registers.
+* Run the new version's upgrade migrations on a copy of a store running on SQLite: `NopSqliteMigrationProcessor` rebuilds the tables whose columns they alter.
 * A startup with an order from 6 to 10, in this or another plugin, would see the database as not installed.
 * If nopCommerce ever names SQLite in `DataProviderType`, switch to that value.
 * Update `SupportedVersions` in `plugin.json` and the package versions (`Microsoft.Data.Sqlite` follows the .NET version of nopCommerce).
@@ -122,9 +128,7 @@ Create a branch named after the version, starting from the closest existing bran
 * No built-in encryption (`Password=` needs SQLCipher).
 * Decimals are stored as 8-byte floating point, since SQLite has no decimal type. Prices and totals stay exact; rounding differences can appear only beyond 15 significant digits.
 * `NOCASE` folds ASCII letters only (`É`/`é` compare as different).
-* Some future nopCommerce upgrade migrations may not work on SQLite:
-  * one that alters an existing column (`Alter.Column`) fails the upgrade
-  * one that adds a foreign key to an existing table is skipped, with a warning in the log
+* A foreign key that a nopCommerce migration adds to an existing table is skipped, with a warning in the log: the column and its data are there, but SQLite doesn't enforce that key. Upgrading 4.80 to 4.90 skips two (`NewsLetterSubscription.TypeId`, `ShoppingCartItem.CustomWishlistId`), and a new store one (`Order.RewardPointsHistoryEntryId`).
 
 ## License
 

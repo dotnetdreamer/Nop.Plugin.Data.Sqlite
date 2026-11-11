@@ -29,7 +29,7 @@ public class SqliteProcessorAccessor : NopProcessorAccessor
     protected override void ConfigureProcessor(IList<IMigrationProcessor> processors)
     {
         if (SqliteDataSettings.IsSqlite(DataSettingsManager.LoadSettings()))
-            Processor = FindGenerator(processors, SqliteDataProviderDefaults.MigrationProcessorId);
+            Processor = FindProcessor(processors, SqliteDataProviderDefaults.MigrationProcessorId);
         else
             base.ConfigureProcessor(processors);
     }

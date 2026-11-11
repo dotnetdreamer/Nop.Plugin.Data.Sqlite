@@ -81,6 +81,20 @@ public class NopSqliteMigrationGenerator : SQLiteGenerator
 
     #region Methods
 
+    /// <summary>
+    /// Generates the definition of a column, as CREATE TABLE declares it
+    /// </summary>
+    /// <param name="column">Column definition</param>
+    /// <returns>Column definition SQL, e.g. "TypeId" INTEGER NOT NULL</returns>
+    public virtual string GenerateColumnDefinition(ColumnDefinition column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        ApplyCaseInsensitiveCollation([column]);
+
+        return Column.Generate(column);
+    }
+
     /// <inheritdoc />
     public override string Generate(CreateTableExpression expression)
     {

@@ -60,7 +60,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <returns>The connection string builder</returns>
     protected static SqliteConnectionStringBuilder GetConnectionStringBuilder()
     {
-        return new SqliteConnectionStringBuilder(SqliteConnectionStringHelper.Normalize(GetCurrentConnectionString()));
+        return new SqliteConnectionStringBuilder(SqliteConnectionStringHelper.Normalize(DataSettingsManager.LoadSettings().ConnectionString));
     }
 
     /// <summary>
@@ -194,9 +194,11 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <summary>
     /// Creates the database by using the loaded connection string
     /// </summary>
-    /// <param name="collation">Collation (not used: text columns get the case-insensitive NOCASE collation)</param>
     /// <param name="triesToConnect">Count of tries to connect to the database after creating (not used: the file is created synchronously)</param>
-    public void CreateDatabase(string collation, int triesToConnect = 10)
+    /// <remarks>
+    /// Text columns get the case-insensitive NOCASE collation, whatever collation the data settings name
+    /// </remarks>
+    public void CreateDatabase(int triesToConnect = 10)
     {
         var builder = GetConnectionStringBuilder();
 
@@ -591,7 +593,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
 
-        using var source = new NopSqliteConnection(GetCurrentConnectionString());
+        using var source = new NopSqliteConnection(DataSettings.ConnectionString);
         source.Open();
 
         using var destination = OpenPlainConnection(fileName, SqliteOpenMode.ReadWriteCreate);
@@ -661,6 +663,20 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     }
 
     /// <summary>
+    /// Shrinks database
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation</returns>
+    public virtual Task ShrinkDatabaseAsync()
+    {
+        //rebuild the file without its free pages, then empty the write-ahead log
+        return Writer.EnqueueAsync(connection =>
+        {
+            connection.Execute("VACUUM;");
+            connection.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
+        });
+    }
+
+    /// <summary>
     /// Build the connection string
     /// </summary>
     /// <param name="nopConnectionString">Connection string info</param>
@@ -721,6 +737,21 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         throw new NotSupportedException($"SQLite doesn't support stored procedures ('{procedureName}')");
     }
 
+    /// <summary>
+    /// Gets the name of the database collation
+    /// </summary>
+    /// <returns>
+    /// A task that represents the asynchronous operation
+    /// The task result contains the collation name
+    /// </returns>
+    /// <remarks>
+    /// SQLite has no database collation: the plugin creates every text column with NOCASE (see NopSqliteMigrationGenerator)
+    /// </remarks>
+    public virtual Task<string> GetDataBaseCollationAsync()
+    {
+        return Task.FromResult("NOCASE");
+    }
+
     #endregion
 
     #region Properties
@@ -728,7 +759,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <summary>
     /// Gets the background writer of the database
     /// </summary>
-    protected SqliteWriteQueue Writer => SqliteWriteQueue.Get(GetCurrentConnectionString(), CreateDataConnection);
+    protected SqliteWriteQueue Writer => SqliteWriteQueue.Get(DataSettings.ConnectionString, CreateDataConnection);
 
     /// <summary>
     /// Linq2Db data provider (SQLite through Microsoft.Data.Sqlite)

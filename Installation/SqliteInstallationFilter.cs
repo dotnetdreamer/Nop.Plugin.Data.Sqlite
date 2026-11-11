@@ -8,6 +8,7 @@ using Newtonsoft.Json;
 using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Configuration;
+using Nop.Core.Http;
 using Nop.Core.Infrastructure;
 using Nop.Data;
 using Nop.Data.Configuration;
@@ -27,7 +28,7 @@ namespace Nop.Plugin.Data.Sqlite.Installation;
 /// <remarks>
 /// InstallController.Index creates the data provider with DataProviderManager.GetDataProvider, which only knows the built-in
 /// data providers, so for SQLite the filter runs the installation instead of the action. Apart from the data provider it does
-/// what InstallController.Index of nopCommerce 4.80 does: keep them in line when upgrading nopCommerce.
+/// what InstallController.Index of nopCommerce 4.90 does: keep them in line when upgrading nopCommerce.
 /// </remarks>
 public class SqliteInstallationFilter : IAsyncActionFilter
 {
@@ -97,14 +98,16 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         DataSettingsManager.SaveSettings(new DataConfig
         {
             DataProvider = SqliteDataSettings.ProviderType,
-            ConnectionString = connectionString
+            ConnectionString = connectionString,
+            Collation = model.Collation,
+            CharacterSet = model.CharacterSet
         }, _fileProvider);
 
         if (model.CreateDatabaseIfNotExists && !await dataProvider.DatabaseExistsAsync())
         {
             try
             {
-                dataProvider.CreateDatabase(model.Collation);
+                dataProvider.CreateDatabase();
             }
             catch (Exception exception)
             {
@@ -118,18 +121,6 @@ public class SqliteInstallationFilter : IAsyncActionFilter
 
         //from here on the same as InstallController.Index
         var nopHttpClient = services.GetRequiredService<NopHttpClient>();
-
-        if (model.SubscribeNewsletters)
-        {
-            try
-            {
-                await nopHttpClient.SubscribeNewslettersAsync(model.AdminEmail);
-            }
-            catch
-            {
-                // ignored
-            }
-        }
 
         var cultureInfo = new CultureInfo(NopCommonDefaults.DefaultLanguageCulture);
         var regionInfo = new RegionInfo(NopCommonDefaults.DefaultLanguageCulture);
@@ -177,11 +168,29 @@ public class SqliteInstallationFilter : IAsyncActionFilter
             await services.GetRequiredService<IUploadService>().UploadLocalePatternAsync(cultureInfo);
         }
 
-        var installationService = services.GetRequiredService<IInstallationService>();
-        await installationService.InstallRequiredDataAsync(model.AdminEmail, model.AdminPassword, languagePackInfo, regionInfo, cultureInfo);
+        if (model.SubscribeNewsletters)
+        {
+            try
+            {
+                await nopHttpClient.SubscribeNewsLettersAsync(model.AdminEmail);
+            }
+            catch
+            {
+                // ignored
+            }
+        }
 
-        if (model.InstallSampleData)
-            await installationService.InstallSampleDataAsync(model.AdminEmail);
+        //now resolve installation service and install nopCommerce
+        await services.GetRequiredService<IInstallationService>().InstallAsync(new InstallationSettings
+        {
+            AdminEmail = model.AdminEmail,
+            AdminPassword = model.AdminPassword,
+            LanguagePackDownloadLink = languagePackInfo.DownloadUrl,
+            LanguagePackProgress = languagePackInfo.Progress,
+            RegionInfo = regionInfo,
+            CultureInfo = cultureInfo,
+            InstallSampleData = model.InstallSampleData
+        });
 
         //prepare plugins to install
         var pluginService = services.GetRequiredService<IPluginService>();
@@ -241,7 +250,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         {
             await InstallAsync(model, context.HttpContext.RequestServices);
 
-            context.Result = controller.View(new InstallModel { RestartUrl = controller.Url.RouteUrl("Homepage") });
+            context.Result = controller.View(new InstallModel { RestartUrl = controller.Url.RouteUrl(NopRouteNames.General.HOMEPAGE) });
         }
         catch (Exception exception)
         {
