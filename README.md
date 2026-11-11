@@ -10,7 +10,7 @@ Each nopCommerce version has its own branch:
 
 | Branch | nopCommerce |
 | --- | --- |
-| `main` | 4.80 (the same code as `4.80`) |
+| `main` | 5.00, the latest nopCommerce version (the same code as `5.00`) |
 | `4.80` | 4.80 |
 | `4.90` | 4.90 |
 | `5.00` | 5.00 |
