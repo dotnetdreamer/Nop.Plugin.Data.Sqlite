@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <OutputPath>..\..\Presentation\Nop.Web\Plugins\Data.Sqlite</OutputPath>
     <OutDir>$(OutputPath)</OutDir>
     <!--Microsoft.Data.Sqlite and the native SQLite library (runtimes\*\native) aren't part of nopCommerce, so the plugin ships them:
@@ -25,7 +25,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+    <!-- nopCommerce references the FluentMigrator runners of its built-in databases only -->
+    <PackageReference Include="FluentMigrator.Runner.SQLite" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,6 +43,16 @@
   <Target Name="NopTarget" AfterTargets="Build">
     <!-- Delete unnecessary libraries from plugins path -->
     <MSBuild Projects="@(ClearPluginAssemblies)" Properties="PluginPath=$(MSBuildProjectDirectory)\$(OutDir)" Targets="NopClear" />
+  </Target>
+
+  <!-- nopCommerce 5.00 deletes the runtimes folder of every plugin (ClearPluginAssemblies), and that's where the native SQLite
+  library is: copy it back, for every platform (SqliteNativeLibraryResolver loads the one of the running platform). Only the
+  SQLite library: the native libraries of the other packages (SkiaSharp...) are in the store's own runtimes folder -->
+  <Target Name="SqliteNativeLibraries" AfterTargets="NopTarget">
+    <ItemGroup>
+      <SqliteNativeLibrary Include="@(RuntimeTargetsCopyLocalItems)" Condition="'%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'SQLitePCLRaw.lib.e_sqlite3'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SqliteNativeLibrary)" DestinationFiles="@(SqliteNativeLibrary->'$(MSBuildProjectDirectory)\$(OutDir)%(DestinationSubDirectory)%(Filename)%(Extension)')" />
   </Target>
 
 </Project>

@@ -25,7 +25,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
 {
     #region Fields
 
-    protected static readonly Lazy<IDataProvider> _dataProvider = new(() => SQLiteTools.GetDataProvider(ProviderName.SQLiteMS), true);
+    protected static readonly Lazy<IDataProvider> _dataProvider = new(() => SQLiteTools.GetDataProvider(SQLiteProvider.Microsoft), true);
 
     #endregion
 
@@ -121,7 +121,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         using var transaction = dataConnection.BeginTransaction();
 
         AssignIdentities(dataConnection, entities);
-        dataConnection.BulkCopy(new BulkCopyOptions { KeepIdentity = true }, entities);
+        dataConnection.BulkCopy(CreateBulkCopyOptions(), entities);
 
         transaction.Commit();
     }
@@ -274,11 +274,18 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
             .UseConnectionFactory(LinqToDbDataProvider, _ => CreateDbConnection())
             .UseMappingSchema(NopMappingSchema.GetMappingSchema(ConfigurationName, LinqToDbDataProvider));
 
-        return new DataContext(options)
+        var dataContext = new DataContext(options)
         {
-            CommandTimeout = DataSettingsManager.GetSqlCommandTimeout()
-        }
-        .GetTable<TEntity>();
+            CloseAfterUse = DataSettings.CloseDataContextAfterUse
+        };
+
+        var sqlCommandTimeout = DataSettings.SQLCommandTimeout ?? -1;
+        if (sqlCommandTimeout == -1)
+            dataContext.ResetCommandTimeout();
+        else
+            dataContext.CommandTimeout = sqlCommandTimeout;
+
+        return dataContext.GetTable<TEntity>();
     }
 
     /// <summary>
@@ -486,7 +493,11 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// </summary>
     /// <param name="resetIdentity">Performs reset identity column</param>
     /// <typeparam name="TEntity">Entity type</typeparam>
-    public override Task TruncateAsync<TEntity>(bool resetIdentity = false)
+    /// <returns>
+    /// A task that represents the asynchronous operation
+    /// The task result contains the number of records, affected by command execution.
+    /// </returns>
+    public override Task<int> TruncateAsync<TEntity>(bool resetIdentity = false)
     {
         return Writer.EnqueueAsync(connection => connection.GetTable<TEntity>().Truncate(resetIdentity));
     }
@@ -527,7 +538,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
             });
 
         var hashes = new Dictionary<int, string>();
-        await foreach (var value in LinqToDB.AsyncExtensions.AsAsyncEnumerable(values))
+        await foreach (var value in LinqToDB.Async.AsyncExtensions.AsAsyncEnumerable(values))
             hashes[value.Id] = HashHelper.CreateHash(value.Value ?? [], SqliteDataProviderDefaults.HashAlgorithm);
 
         return hashes;
@@ -636,7 +647,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
                     throw new DataException($"The database backup file is damaged: {result}");
             }
 
-            var destination = GetSqliteConnection(connection.Connection);
+            var destination = GetSqliteConnection(connection.OpenDbConnection());
 
             //the live database is replaced page by page; other connections see the restored data with their next statement
             source.BackupDatabase(destination);
@@ -660,6 +671,28 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
             connection.Execute("VACUUM;");
             connection.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
         });
+    }
+
+    /// <summary>
+    /// Gets the database size in Kb
+    /// </summary>
+    /// <returns>
+    /// A task that represents the asynchronous operation
+    /// The task result contains the database size
+    /// </returns>
+    /// <remarks>
+    /// The pages of the database file and the write-ahead log, as SQL Server counts its data and log files
+    /// </remarks>
+    public virtual async Task<long> GetDatabaseSizeAsync()
+    {
+        using var dataConnection = CreateDataConnection();
+        var bytes = await dataConnection.ExecuteAsync<long>("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size();");
+
+        var builder = GetConnectionStringBuilder();
+        if (!SqliteConnectionStringHelper.IsInMemory(builder) && File.Exists(builder.DataSource + "-wal"))
+            bytes += new FileInfo(builder.DataSource + "-wal").Length;
+
+        return bytes / 1024;
     }
 
     /// <summary>

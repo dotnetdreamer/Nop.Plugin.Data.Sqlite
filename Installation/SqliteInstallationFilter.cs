@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -28,11 +29,18 @@ namespace Nop.Plugin.Data.Sqlite.Installation;
 /// <remarks>
 /// InstallController.Index creates the data provider with DataProviderManager.GetDataProvider, which only knows the built-in
 /// data providers, so for SQLite the filter runs the installation instead of the action. Apart from the data provider it does
-/// what InstallController.Index of nopCommerce 4.90 does: keep them in line when upgrading nopCommerce.
+/// what InstallController.Index of nopCommerce 5.00 does: keep them in line when upgrading nopCommerce.
 /// </remarks>
 public class SqliteInstallationFilter : IAsyncActionFilter
 {
     #region Fields
+
+    //the wizard polls InstallController.Progress for the step in progress, which the controller keeps in a private field
+    //set by its protected SetProgressMessage method (null if a version doesn't have them: the wizard then shows no steps)
+    private static readonly MethodInfo _setProgressMessage =
+        typeof(InstallController).GetMethod("SetProgressMessage", BindingFlags.Instance | BindingFlags.NonPublic, [typeof(string)]);
+    private static readonly FieldInfo _installProgressInfoModel =
+        typeof(InstallController).GetField("_installProgressInfoModel", BindingFlags.Static | BindingFlags.NonPublic);
 
     protected readonly AppSettings _appSettings;
     protected readonly IInstallationLocalizationService _locService;
@@ -54,6 +62,24 @@ public class SqliteInstallationFilter : IAsyncActionFilter
     #endregion
 
     #region Utilities
+
+    /// <summary>
+    /// Shows the step in progress in the installation wizard, as InstallController.Index does
+    /// </summary>
+    /// <param name="controller">Installation controller</param>
+    /// <param name="resourceName">Name of the installation resource describing the step</param>
+    protected virtual void SetProgressMessage(InstallController controller, string resourceName)
+    {
+        _setProgressMessage?.Invoke(controller, [_locService.GetResource(resourceName)]);
+    }
+
+    /// <summary>
+    /// Clears the step in progress once the installation is over, as InstallController.Index does
+    /// </summary>
+    protected virtual void ClearProgressMessage()
+    {
+        _installProgressInfoModel?.SetValue(null, null);
+    }
 
     /// <summary>
     /// Check whether the request posts the installation form with SQLite selected
@@ -84,10 +110,11 @@ public class SqliteInstallationFilter : IAsyncActionFilter
     /// <summary>
     /// Install nopCommerce on SQLite
     /// </summary>
+    /// <param name="controller">Installation controller</param>
     /// <param name="model">Installation model</param>
     /// <param name="services">Request services</param>
     /// <returns>A task that represents the asynchronous operation</returns>
-    protected virtual async Task InstallAsync(InstallModel model, IServiceProvider services)
+    protected virtual async Task InstallAsync(InstallController controller, InstallModel model, IServiceProvider services)
     {
         var dataProvider = new SqliteNopDataProvider();
 
@@ -107,6 +134,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         {
             try
             {
+                SetProgressMessage(controller, "Progress.CreateDatabase");
                 dataProvider.CreateDatabase();
             }
             catch (Exception exception)
@@ -117,6 +145,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         else if (!await dataProvider.DatabaseExistsAsync())
             throw new Exception(_locService.GetResource("DatabaseNotExists"));
 
+        SetProgressMessage(controller, "Progress.InitializeDatabase");
         dataProvider.InitializeDatabase();
 
         //from here on the same as InstallController.Index
@@ -128,6 +157,8 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         var languagePackInfo = (DownloadUrl: string.Empty, Progress: 0);
         if (model.InstallRegionalResources)
         {
+            SetProgressMessage(controller, "Progress.RegionalResources");
+
             //try to get CultureInfo and RegionInfo
             if (model.Country != null)
             {
@@ -180,6 +211,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
             }
         }
 
+        SetProgressMessage(controller, "Progress.InsertData");
         //now resolve installation service and install nopCommerce
         await services.GetRequiredService<IInstallationService>().InstallAsync(new InstallationSettings
         {
@@ -208,6 +240,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
             .OrderBy(pluginDescriptor => pluginDescriptor.Group).ThenBy(pluginDescriptor => pluginDescriptor.DisplayOrder)
             .ToList();
 
+        SetProgressMessage(controller, "Progress.PreparePlugins");
         foreach (var plugin in plugins)
             await pluginService.PreparePluginToInstallAsync(plugin.SystemName, checkDependencies: false);
     }
@@ -240,6 +273,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
         model.InstallRegionalResources = _appSettings.Get<InstallationConfig>().InstallRegionalResources;
 
         //the action redirects to the home page or shows the errors
+        SetProgressMessage(controller, "Progress.CheckPermissions");
         if (DataSettingsManager.IsDatabaseInstalled() || !context.ModelState.IsValid || !CheckPermissions())
         {
             await next();
@@ -248,7 +282,7 @@ public class SqliteInstallationFilter : IAsyncActionFilter
 
         try
         {
-            await InstallAsync(model, context.HttpContext.RequestServices);
+            await InstallAsync(controller, model, context.HttpContext.RequestServices);
 
             context.Result = controller.View(new InstallModel { RestartUrl = controller.Url.RouteUrl(NopRouteNames.General.HOMEPAGE) });
         }
@@ -262,6 +296,10 @@ public class SqliteInstallationFilter : IAsyncActionFilter
             //the action shows the error
             context.ModelState.AddModelError(string.Empty, string.Format(_locService.GetResource("SetupFailed"), exception.Message));
             await next();
+        }
+        finally
+        {
+            ClearProgressMessage();
         }
     }
 

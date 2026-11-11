@@ -130,7 +130,7 @@ public sealed class SqliteWriteQueue
     /// <returns>True if a transaction is open; otherwise false</returns>
     private static bool IsInTransaction(DataConnection connection)
     {
-        return connection.Connection is SqliteConnection { Handle: { } handle } && raw.sqlite3_get_autocommit(handle) == 0;
+        return connection.TryGetDbConnection() is SqliteConnection { Handle: { } handle } && raw.sqlite3_get_autocommit(handle) == 0;
     }
 
     /// <summary>
