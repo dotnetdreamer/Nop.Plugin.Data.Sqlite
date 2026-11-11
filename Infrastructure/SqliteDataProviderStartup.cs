@@ -64,7 +64,7 @@ public class SqliteDataProviderStartup : INopStartup
         if (DataSettingsManager.IsDatabaseInstalled() && !SqliteDataSettings.IsSqlite(DataSettingsManager.LoadSettings()))
             return;
 
-        SqliteNativeLibraryResolver.Register();
+        SqliteGlobalSettings.Apply();
 
         //the data provider (INopDataProvider is resolved through IDataProviderManager)
         services.AddTransient<IDataProviderManager, SqliteDataProviderManager>();

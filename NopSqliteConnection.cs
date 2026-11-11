@@ -29,8 +29,8 @@ public class NopSqliteConnection : SqliteConnection
 
     static NopSqliteConnection()
     {
-        //must happen before Microsoft.Data.Sqlite loads the native library
-        SqliteNativeLibraryResolver.Register();
+        //must happen before Microsoft.Data.Sqlite loads the native library and SQLite initializes
+        SqliteGlobalSettings.Apply();
     }
 
     public NopSqliteConnection()
@@ -119,6 +119,33 @@ public class NopSqliteConnection : SqliteConnection
     {
         await base.OpenAsync(cancellationToken);
         Initialize();
+    }
+
+    /// <summary>
+    /// Closes the connection
+    /// </summary>
+    /// <remarks>
+    /// A transaction begun with SQL (BEGIN, not BeginTransaction) and left open is rolled back: Microsoft.Data.Sqlite would give
+    /// the connection back to its pool with the transaction open, and its locks would make every later write fail with
+    /// "database is locked". Microsoft.Data.Sqlite rolls back the transactions of BeginTransaction itself
+    /// </remarks>
+    public override void Close()
+    {
+        if (State == System.Data.ConnectionState.Open && Transaction is null && Handle is { } handle && raw.sqlite3_get_autocommit(handle) == 0)
+        {
+            try
+            {
+                using var command = CreateCommand();
+                command.CommandText = "ROLLBACK;";
+                command.ExecuteNonQuery();
+            }
+            catch (SqliteException)
+            {
+                //the transaction ended meanwhile (e.g. SQLite rolled it back after an error)
+            }
+        }
+
+        base.Close();
     }
 
     #endregion

@@ -44,6 +44,17 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     }
 
     /// <summary>
+    /// Gets the SQLite connection of a connection used by the store
+    /// </summary>
+    /// <param name="connection">Connection</param>
+    /// <returns>SQLite connection</returns>
+    protected static SqliteConnection GetSqliteConnection(DbConnection connection)
+    {
+        return connection as SqliteConnection
+            ?? throw new NopException($"Unexpected connection type: {connection?.GetType().Name}");
+    }
+
+    /// <summary>
     /// Gets the connection string builder of the current connection string (with the database path resolved)
     /// </summary>
     /// <returns>The connection string builder</returns>
@@ -283,7 +294,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         {
             entity.Id = connection.InsertWithInt32Identity(entity);
             return entity;
-        });
+        }, batchable: true);
     }
 
     /// <summary>
@@ -298,7 +309,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         {
             entity.Id = connection.InsertWithInt32Identity(entity);
             return entity;
-        });
+        }, batchable: true);
     }
 
     /// <summary>
@@ -310,7 +321,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <returns>A task that represents the asynchronous operation</returns>
     public override Task UpdateEntityAsync<TEntity>(TEntity entity)
     {
-        return Writer.EnqueueAsync(connection => connection.Update(entity));
+        return Writer.EnqueueAsync(connection => connection.Update(entity), batchable: true);
     }
 
     /// <summary>
@@ -321,7 +332,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <typeparam name="TEntity">Entity type</typeparam>
     public override void UpdateEntity<TEntity>(TEntity entity)
     {
-        Writer.Execute(connection => connection.Update(entity));
+        Writer.Execute(connection => connection.Update(entity), batchable: true);
     }
 
     /// <summary>
@@ -361,7 +372,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <returns>A task that represents the asynchronous operation</returns>
     public override Task DeleteEntityAsync<TEntity>(TEntity entity)
     {
-        return Writer.EnqueueAsync(connection => connection.Delete(entity));
+        return Writer.EnqueueAsync(connection => connection.Delete(entity), batchable: true);
     }
 
     /// <summary>
@@ -372,7 +383,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// <typeparam name="TEntity">Entity type</typeparam>
     public override void DeleteEntity<TEntity>(TEntity entity)
     {
-        Writer.Execute(connection => connection.Delete(entity));
+        Writer.Execute(connection => connection.Delete(entity), batchable: true);
     }
 
     /// <summary>
@@ -412,7 +423,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// </returns>
     public override Task<int> BulkDeleteEntitiesAsync<TEntity>(Expression<Func<TEntity, bool>> predicate)
     {
-        return Writer.EnqueueAsync(connection => connection.GetTable<TEntity>().Where(predicate).Delete());
+        return Writer.EnqueueAsync(connection => connection.GetTable<TEntity>().Where(predicate).Delete(), batchable: true);
     }
 
     /// <summary>
@@ -425,7 +436,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
     /// </returns>
     public override int BulkDeleteEntities<TEntity>(Expression<Func<TEntity, bool>> predicate)
     {
-        return Writer.Execute(connection => connection.GetTable<TEntity>().Where(predicate).Delete());
+        return Writer.Execute(connection => connection.GetTable<TEntity>().Where(predicate).Delete(), batchable: true);
     }
 
     /// <summary>
@@ -564,7 +575,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
             //sqlite_sequence is an ordinary table: a row exists only once the table got its first record
             if (connection.Execute("UPDATE sqlite_sequence SET seq = @ident WHERE name = @tableName", parameters) == 0)
                 connection.Execute("INSERT INTO sqlite_sequence (name, seq) VALUES (@tableName, @ident)", parameters);
-        });
+        }, batchable: true);
     }
 
     /// <summary>
@@ -580,7 +591,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
 
-        using var source = (SqliteConnection)CreateDbConnection();
+        using var source = new NopSqliteConnection(GetCurrentConnectionString());
         source.Open();
 
         using var destination = OpenPlainConnection(fileName, SqliteOpenMode.ReadWriteCreate);
@@ -623,9 +634,7 @@ public partial class SqliteNopDataProvider : BaseDataProvider, INopDataProvider
                     throw new DataException($"The database backup file is damaged: {result}");
             }
 
-            var destination = (SqliteConnection)connection.Connection;
-            if (destination.State != ConnectionState.Open)
-                destination.Open();
+            var destination = GetSqliteConnection(connection.Connection);
 
             //the live database is replaced page by page; other connections see the restored data with their next statement
             source.BackupDatabase(destination);

@@ -52,9 +52,42 @@ public static class SqliteDataProviderDefaults
     /// </summary>
     /// <remarks>
     /// synchronous = NORMAL is corruption-safe in WAL mode and much faster than FULL (after a power loss the last commits may be rolled back);
-    /// temp_store = MEMORY keeps temporary tables and indexes in memory
+    /// temp_store = MEMORY keeps temporary tables and indexes in memory;
+    /// journal_size_limit shrinks the write-ahead log file back to that size whenever SQLite starts reusing it after a checkpoint
     /// </remarks>
-    public static string ConnectionPragmas => "PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;";
+    public static string ConnectionPragmas => $"PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA journal_size_limit = {WalSizeLimit};";
+
+    /// <summary>
+    /// Gets the size (in bytes) the write-ahead log file is shrunk to once its content is checkpointed
+    /// </summary>
+    /// <remarks>
+    /// The size of the default automatic checkpoint (1000 pages of 4 KB). It isn't a cap: the log grows past it while a reader keeps
+    /// an old snapshot, or while writes come faster than they're checkpointed
+    /// </remarks>
+    public static long WalSizeLimit => 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets how long the writer waits for a new write before it checkpoints and empties the write-ahead log
+    /// </summary>
+    public static TimeSpan IdleCheckpointDelay => TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Gets the maximum number of waiting writes the writer commits together in one transaction
+    /// </summary>
+    public static int WriteBatchSize => 64;
+
+    /// <summary>
+    /// Gets the time after which the writer commits a batch of writes, even if more writes are waiting
+    /// </summary>
+    /// <remarks>
+    /// The writes of a batch are reported as done only once the batch is committed, so it bounds how long the first one waits
+    /// </remarks>
+    public static TimeSpan WriteBatchDuration => TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// Gets the name of the savepoint isolating each write of a batch
+    /// </summary>
+    public static string WriteSavepointName => "nop_write";
 
     /// <summary>
     /// Gets the maximum number of identifiers per "DELETE ... WHERE Id IN (...)" statement

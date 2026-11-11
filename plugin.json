@@ -2,7 +2,7 @@
   "Group": "Data providers",
   "FriendlyName": "SQLite data provider",
   "SystemName": "Data.Sqlite",
-  "Version": "4.80.1",
+  "Version": "4.80.2",
   "SupportedVersions": [ "4.80" ],
   "Author": "Fabrix",
   "DisplayOrder": 1,
